@@ -1,6 +1,5 @@
 import uuid
-from typing import Any
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel
 from app.db.qdrant import upsert, get_client, search
 
@@ -9,55 +8,27 @@ router = APIRouter(prefix="/products", tags=["products"])
 
 class ProductItem(BaseModel):
     """Схема товара от 1С."""
-    id: str                          # UUID от 1С
+    id: str              # UUID от 1С
     name: str
-    article: str | None = None
-    slug: str | None = None
-    description: str | None = None
-    category: str | None = None
-    category_slug: str | None = None
-    subcategory: str | None = None
-    subcategory_slug: str | None = None
-    type: str | None = None
-    type_slug: str | None = None
-    brand: str | None = None
-    brand_slug: str | None = None
     price: float | None = None
-    in_stock: bool = True
-    deleted: bool = False
-    attributes: dict[str, Any] = {}
-    images: list[str] = []
-    embedding_text: str              # готовый текст для векторизации
+    embedding_text: str  # готовый текст для векторизации
 
     def to_upsert_item(self) -> dict:
         numeric_id = uuid.UUID(self.id).int % (2**63)
         return {
-            "id": numeric_id,
-            "text": self.embedding_text,
+            "id":        numeric_id,
+            "text":      self.embedding_text,
             "source_id": self.id,
-            "name": self.name,
-            "article": self.article,
-            "slug": self.slug,
-            "category": self.category,
-            "subcategory": self.subcategory,
-            "type": self.type,
-            "brand": self.brand,
-            "price": self.price,
-            "in_stock": self.in_stock,
-            "deleted": self.deleted,
-            "attributes": self.attributes,
-            "images": self.images,
+            "name":      self.name,
+            "price":     self.price,
         }
 
 
 @router.post("")
 def upsert_products(items: list[ProductItem]):
     """Приём товаров от 1С."""
-    to_insert = [p.to_upsert_item() for p in items if not p.deleted]
-    if not to_insert:
-        return {"inserted": 0, "skipped": len(items)}
-    count = upsert("products", to_insert)
-    return {"inserted": count, "skipped": len(items) - count}
+    count = upsert("products", [p.to_upsert_item() for p in items])
+    return {"inserted": count}
 
 
 class SearchRequest(BaseModel):

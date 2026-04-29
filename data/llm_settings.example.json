@@ -1,0 +1,19 @@
+{
+  "active_provider": "gigachat",
+  "active_model": "GigaChat",
+  "providers": {
+    "gigachat": {
+      "api_key": "base64_credentials_из_личного_кабинета_сбера",
+      "gigachat_scope": "GIGACHAT_API_PERS"
+    },
+    "openai": {
+      "api_key": "sk-..."
+    },
+    "openrouter": {
+      "api_key": "sk-or-..."
+    },
+    "lmstudio": {
+      "api_key": "lm-studio"
+    }
+  }
+}

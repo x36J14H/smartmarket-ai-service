@@ -3,4 +3,5 @@ uvicorn[standard]
 pydantic-settings
 openai
 qdrant-client
-fastembed
+fastembed==0.5.1
+gigachat

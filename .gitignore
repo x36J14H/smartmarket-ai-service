@@ -1,5 +1,30 @@
-.kiro *
-models_cache/
+# Python
+venv/
 __pycache__/
 *.pyc
+*.pyo
+
+# Окружение
 .env
+
+# Данные и настройки (кроме примеров)
+data/*.json
+!data/*.example.json
+
+# Векторная БД и модели
+storage/
+models_cache/
+snapshots/
+
+# Docker (локальная инфраструктура, не для репо)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# PM2 (локальный запуск)
+ecosystem.config.js
+
+# IDE
+.kiro/
+.idea/
+.vscode/

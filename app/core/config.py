@@ -9,16 +9,22 @@ class Settings(BaseSettings):
     qdrant_port: int = 6333
 
     # Embedding
-    embed_model: str = "BAAI/bge-m3"
+    embed_model: str = "intfloat/multilingual-e5-large"
     embed_dim: int = 1024
 
-    # LLM (OpenAI-compatible)
+    # LLM — дефолтный провайдер и ключ (используются если нет data/llm_settings.json)
+    llm_provider: str = "openai"
     llm_api_key: str = "sk-..."
-    llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
 
+    # base_url для каждого провайдера
+    openai_base_url: str = "https://api.openai.com/v1"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    lmstudio_base_url: str = "http://localhost:1234/v1"
+    # GigaChat не нужен — SDK сам знает адрес
+
     # RAG
-    top_k: int = 4
+    top_k: int = 6
 
 
 settings = Settings()
