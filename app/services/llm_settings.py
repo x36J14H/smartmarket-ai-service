@@ -3,12 +3,22 @@
 Структура файла:
 {
   "active_provider": "gigachat",
-  "active_model": "GigaChat",
+  "active_model": "GigaChat-2",
   "providers": {
-    "gigachat": {"api_key": "...", "gigachat_scope": "GIGACHAT_API_PERS"},
-    "openai":   {"api_key": "sk-..."},
-    "openrouter": {"api_key": "sk-or-..."},
-    "lmstudio": {"api_key": "lm-studio"}
+    "gigachat": {
+      "api_key": "...",
+      "gigachat_scope": "GIGACHAT_API_PERS",
+      "selected_model": "GigaChat-2"
+    },
+    "openai": {
+      "api_key": "sk-...",
+      "base_url": "https://api.openai.com/v1",  // опционально — кастомный эндпоинт
+      "selected_model": "gpt-4o-mini"
+    },
+    "openrouter": {
+      "api_key": "sk-or-...",
+      "selected_model": "openai/gpt-4o-mini"
+    }
   }
 }
 """
@@ -41,7 +51,7 @@ def _save(data: dict) -> None:
 
 def get_active_provider_cfg() -> dict | None:
     """
-    Вернуть конфиг активного провайдера: {api_key, gigachat_scope?, ...}
+    Вернуть конфиг активного провайдера: {api_key, base_url?, gigachat_scope?, model}
     Возвращает None если файла нет или активный провайдер не настроен.
     """
     data = load_llm_settings()
@@ -59,19 +69,37 @@ def get_active_provider_cfg() -> dict | None:
 
 
 def save_provider_credentials(provider: str, credentials: dict) -> None:
-    """Сохранить/обновить учётные данные одного провайдера."""
+    """Сохранить/обновить учётные данные провайдера, не трогая selected_model."""
     data = load_llm_settings()
     if "providers" not in data:
         data["providers"] = {}
-    data["providers"][provider] = credentials
+    existing = data["providers"].get(provider, {})
+    updated = {**existing, **credentials}
+    data["providers"][provider] = updated
+    _save(data)
+
+
+def save_provider_model(provider: str, model: str) -> None:
+    """Сохранить выбранную модель для провайдера (не меняет активный провайдер)."""
+    data = load_llm_settings()
+    if "providers" not in data:
+        data["providers"] = {}
+    if provider not in data["providers"]:
+        data["providers"][provider] = {}
+    data["providers"][provider]["selected_model"] = model
     _save(data)
 
 
 def set_active_provider(provider: str, model: str) -> None:
-    """Переключить активный провайдер и модель."""
+    """Переключить активный провайдер и модель. Также обновляет selected_model провайдера."""
     data = load_llm_settings()
     data["active_provider"] = provider
     data["active_model"] = model
+    if "providers" not in data:
+        data["providers"] = {}
+    if provider not in data["providers"]:
+        data["providers"][provider] = {}
+    data["providers"][provider]["selected_model"] = model
     _save(data)
 
 

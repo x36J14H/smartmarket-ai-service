@@ -4,16 +4,16 @@
   "providers": {
     "gigachat": {
       "api_key": "base64_credentials_из_личного_кабинета_сбера",
-      "gigachat_scope": "GIGACHAT_API_PERS"
+      "gigachat_scope": "GIGACHAT_API_PERS",
+      "selected_model": "GigaChat"
     },
     "openai": {
-      "api_key": "sk-..."
+      "api_key": "sk-...",
+      "selected_model": "gpt-4o-mini"
     },
     "openrouter": {
-      "api_key": "sk-or-..."
-    },
-    "lmstudio": {
-      "api_key": "lm-studio"
+      "api_key": "sk-or-...",
+      "selected_model": "openai/gpt-4o-mini"
     }
   }
 }

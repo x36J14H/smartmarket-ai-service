@@ -17,10 +17,9 @@ class Settings(BaseSettings):
     llm_api_key: str = "sk-..."
     llm_model: str = "gpt-4o-mini"
 
-    # base_url для каждого провайдера
+    # base_url для провайдеров
     openai_base_url: str = "https://api.openai.com/v1"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    lmstudio_base_url: str = "http://localhost:1234/v1"
     # GigaChat не нужен — SDK сам знает адрес
 
     # RAG

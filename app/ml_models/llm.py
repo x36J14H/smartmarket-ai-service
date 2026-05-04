@@ -23,19 +23,19 @@ def _get_active_settings() -> dict:
         provider = settings.llm_provider
         cfg = {"api_key": settings.llm_api_key, "model": settings.llm_model}
 
-    # base_url определяется провайдером — всегда из .env
-    base_url_map = {
+    # base_url: приоритет — кастомный из настроек провайдера, затем дефолт из .env
+    default_base_url_map = {
         "openai":     settings.openai_base_url,
         "openrouter": settings.openrouter_base_url,
-        "lmstudio":   settings.lmstudio_base_url,
         "gigachat":   None,  # SDK не использует base_url
     }
+    base_url = cfg.get("base_url") or default_base_url_map.get(provider)
 
     return {
         "provider":       provider,
         "api_key":        cfg.get("api_key") or settings.llm_api_key,
         "model":          cfg.get("model")   or settings.llm_model,
-        "base_url":       base_url_map.get(provider),
+        "base_url":       base_url,
         "gigachat_scope": cfg.get("gigachat_scope"),
     }
 
@@ -107,7 +107,7 @@ def _dispatch(messages: list[dict], temperature: float, max_tokens: int) -> str:
     if provider == "gigachat":
         result = _ask_gigachat(messages, cfg, temperature, max_tokens)
     else:
-        # openai / openrouter / lmstudio — все OpenAI-compatible
+        # openai / openrouter — OpenAI-compatible (openai также поддерживает кастомный base_url)
         result = _ask_openai_compatible(messages, cfg, temperature, max_tokens)
 
     # Убираем <think>...</think> (Qwen3 и другие reasoning-модели)
