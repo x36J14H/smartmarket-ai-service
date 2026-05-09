@@ -1,7 +1,6 @@
-import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.db.qdrant import upsert, get_client, search
+from app.db.qdrant import upsert, get_client, search, uuid_to_int64
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -14,7 +13,7 @@ class ProductItem(BaseModel):
     embedding_text: str  # готовый текст для векторизации
 
     def to_upsert_item(self) -> dict:
-        numeric_id = uuid.UUID(self.id).int % (2**63)
+        numeric_id = uuid_to_int64(self.id)
         return {
             "id":        numeric_id,
             "text":      self.embedding_text,
@@ -46,6 +45,6 @@ def search_products(req: SearchRequest):
 @router.delete("/{product_id}")
 def delete_product(product_id: str):
     """Удаление товара по UUID от 1С."""
-    numeric_id = uuid.UUID(product_id).int % (2**63)
+    numeric_id = uuid_to_int64(product_id)
     get_client().delete(collection_name="products", points_selector=[numeric_id])
     return {"deleted": product_id}

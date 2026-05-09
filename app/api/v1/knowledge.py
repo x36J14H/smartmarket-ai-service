@@ -1,7 +1,6 @@
-import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.db.qdrant import upsert, get_client
+from app.db.qdrant import upsert, get_client, uuid_to_int64
 
 router = APIRouter(tags=["knowledge"])
 
@@ -15,7 +14,7 @@ class FaqItem(BaseModel):
     deleted: bool = False
 
     def to_upsert_item(self) -> dict:
-        numeric_id = uuid.UUID(self.id).int % (2**63)
+        numeric_id = uuid_to_int64(self.id)
         # Векторизуем вопрос + ответ вместе — так поиск работает лучше
         text = f"{self.question}\n{self.answer}"
         return {
@@ -38,7 +37,7 @@ class NavigationItem(BaseModel):
     deleted: bool = False
 
     def to_upsert_item(self) -> dict:
-        numeric_id = uuid.UUID(self.id).int % (2**63)
+        numeric_id = uuid_to_int64(self.id)
         # Векторизуем заголовок + описание
         text = f"{self.title}\n{self.description}"
         return {
@@ -58,9 +57,7 @@ class NavigationItem(BaseModel):
 def upsert_faq(items: list[FaqItem]):
     """Загрузить / обновить FAQ-записи из 1С."""
     to_insert = [i.to_upsert_item() for i in items if not i.deleted]
-    deleted_ids = [
-        uuid.UUID(i.id).int % (2**63) for i in items if i.deleted
-    ]
+    deleted_ids = [uuid_to_int64(i.id) for i in items if i.deleted]
 
     if deleted_ids:
         get_client().delete(collection_name="faq", points_selector=deleted_ids)
@@ -75,7 +72,7 @@ def upsert_faq(items: list[FaqItem]):
 @router.delete("/faq/{item_id}")
 def delete_faq(item_id: str):
     """Удалить FAQ-запись по UUID из 1С."""
-    numeric_id = uuid.UUID(item_id).int % (2**63)
+    numeric_id = uuid_to_int64(item_id)
     get_client().delete(collection_name="faq", points_selector=[numeric_id])
     return {"deleted": item_id}
 
@@ -86,9 +83,7 @@ def delete_faq(item_id: str):
 def upsert_navigation(items: list[NavigationItem]):
     """Загрузить / обновить навигационные записи из 1С."""
     to_insert = [i.to_upsert_item() for i in items if not i.deleted]
-    deleted_ids = [
-        uuid.UUID(i.id).int % (2**63) for i in items if i.deleted
-    ]
+    deleted_ids = [uuid_to_int64(i.id) for i in items if i.deleted]
 
     if deleted_ids:
         get_client().delete(collection_name="navigation", points_selector=deleted_ids)
@@ -103,6 +98,6 @@ def upsert_navigation(items: list[NavigationItem]):
 @router.delete("/navigation/{item_id}")
 def delete_navigation(item_id: str):
     """Удалить навигационную запись по UUID из 1С."""
-    numeric_id = uuid.UUID(item_id).int % (2**63)
+    numeric_id = uuid_to_int64(item_id)
     get_client().delete(collection_name="navigation", points_selector=[numeric_id])
     return {"deleted": item_id}

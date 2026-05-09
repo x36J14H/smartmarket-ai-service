@@ -2,6 +2,9 @@ import os
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 
+import hashlib
+import struct
+import uuid as _uuid
 from functools import lru_cache
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint
@@ -10,6 +13,19 @@ from app.ml_models.embedder import embed_one
 
 # Коллекции: товары, навигация по сайту, FAQ о компании
 COLLECTIONS = ["products", "navigation", "faq"]
+
+
+def uuid_to_int64(source_id: str) -> int:
+    """
+    Конвертировать UUID из 1С в int64 для Qdrant.
+
+    Используем SHA-1 от байт UUID, берём первые 8 байт и маскируем старший бит
+    чтобы получить неотрицательный int63. Это гарантирует уникальность даже
+    для UUID, которые отличаются ровно на 2**63 (при modulo такие UUID коллидируют).
+    """
+    uid_bytes = _uuid.UUID(source_id).bytes
+    digest = hashlib.sha1(uid_bytes).digest()[:8]
+    return struct.unpack(">Q", digest)[0] & 0x7FFFFFFFFFFFFFFF
 
 
 @lru_cache(maxsize=1)
