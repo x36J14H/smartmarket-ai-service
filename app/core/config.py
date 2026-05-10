@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # RAG
     top_k: int = 6
-    score_threshold: float = 0.60  # минимальный score для включения в результаты
+    score_threshold: float = 0.1  # для RRF fusion scores (0–1), не cosine
 
 
 settings = Settings()

@@ -3,6 +3,6 @@ uvicorn[standard]
 pydantic-settings
 openai
 qdrant-client
-fastembed==0.5.1
+fastembed>=0.8.0
 gigachat
 httpx
