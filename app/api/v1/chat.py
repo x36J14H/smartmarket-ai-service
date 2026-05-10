@@ -14,17 +14,17 @@ class ChatRequest(BaseModel):
 
 
 @router.post("")
-def chat_endpoint(req: ChatRequest):
+async def chat_endpoint(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
-    result = chat(req.question, session_id)
+    result = await chat(req.question, session_id)
     result["session_id"] = session_id
     return result
 
 
 @router.post("/hyde")
-def chat_hyde_endpoint(req: ChatRequest):
+async def chat_hyde_endpoint(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
-    result = chat_hyde(req.question, session_id)
+    result = await chat_hyde(req.question, session_id)
     result["session_id"] = session_id
     return result
 

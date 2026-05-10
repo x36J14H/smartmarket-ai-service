@@ -28,3 +28,4 @@ ecosystem.config.js
 .kiro/
 .idea/
 .vscode/
+.docs/

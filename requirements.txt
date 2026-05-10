@@ -5,3 +5,4 @@ openai
 qdrant-client
 fastembed==0.5.1
 gigachat
+httpx

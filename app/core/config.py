@@ -22,8 +22,14 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     # GigaChat не нужен — SDK сам знает адрес
 
+    # 1С backend URL (для проверки остатков)
+    onec_base_url: str = ""
+    onec_user: str = ""
+    onec_password: str = ""
+
     # RAG
     top_k: int = 6
+    score_threshold: float = 0.60  # минимальный score для включения в результаты
 
 
 settings = Settings()

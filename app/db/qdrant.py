@@ -66,20 +66,24 @@ def upsert(collection: str, items: list[dict]) -> int:
     return len(points)
 
 
-def search(query: str, collection: str, top_k: int = None) -> list[ScoredPoint]:
+def search(query: str, collection: str, top_k: int = None, score_threshold: float = None) -> list[ScoredPoint]:
     client = get_client()
     k = top_k or settings.top_k
-    return client.query_points(
+    threshold = score_threshold if score_threshold is not None else settings.score_threshold
+    results = client.query_points(
         collection_name=collection,
         query=embed_one(query),
         limit=k,
+        score_threshold=threshold,
     ).points
+    return results
 
 
-def search_all(query: str, top_k: int = None) -> list[ScoredPoint]:
-    """Поиск по всем коллекциям, возвращает топ-k суммарно."""
+def search_all(query: str, top_k: int = None, score_threshold: float = None) -> list[ScoredPoint]:
+    """Поиск по всем коллекциям, возвращает топ-k суммарно выше порога score."""
+    threshold = score_threshold if score_threshold is not None else settings.score_threshold
     results = []
     for col in COLLECTIONS:
-        results.extend(search(query, col, top_k=top_k or settings.top_k))
+        results.extend(search(query, col, top_k=top_k or settings.top_k, score_threshold=threshold))
     results.sort(key=lambda p: p.score, reverse=True)
     return results[: top_k or settings.top_k]

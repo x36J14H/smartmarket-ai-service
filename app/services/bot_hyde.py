@@ -1,10 +1,20 @@
 from app.db.qdrant import search_all
 from app.ml_models.llm import ask, hypothetical_answer
 from app.services.history import get_history, add_messages
+from app.services.availability import filter_available_ids
 
 
-def chat_hyde(question: str, session_id: str) -> dict:
-    """HyDE RAG: вопрос → гипотетический ответ → embed → Qdrant → LLM → ответ."""
+def _format_chunk(payload: dict) -> str:
+    """Форматирует payload хита в текстовый чанк для LLM-контекста."""
+    source_id = payload.get("source_id")
+    text = payload.get("text", "")
+    if source_id and payload.get("collection") == "products":
+        return f"product_id: {source_id}\nurl: /products/{source_id}\n{text}"
+    return text
+
+
+async def chat_hyde(question: str, session_id: str) -> dict:
+    """HyDE RAG: вопрос → гипотетический ответ → embed → Qdrant → фильтр остатков → LLM → ответ."""
     history = get_history(session_id)
 
     # Шаг 1: LLM генерирует гипотетический документ для поиска
@@ -13,9 +23,24 @@ def chat_hyde(question: str, session_id: str) -> dict:
     # Шаг 2: ищем по гипотетическому документу, а не по сырому вопросу
     hits = search_all(hyde_query)
 
+    # Фильтруем товары без остатков — для FAQ/navigation пропускаем проверку
+    product_ids = [
+        hit.payload.get("source_id")
+        for hit in hits
+        if hit.payload and hit.payload.get("collection") == "products"
+    ]
+    if product_ids:
+        available = await filter_available_ids(product_ids)
+        hits = [
+            hit for hit in hits
+            if hit.payload and (
+                hit.payload.get("collection") != "products"
+                or hit.payload.get("source_id") in available
+            )
+        ]
+
     context_chunks = [
-        (f"product_id: {hit.payload.get('source_id')}\n" if hit.payload.get('source_id') else "")
-        + hit.payload.get("text", "")
+        _format_chunk(hit.payload)
         for hit in hits if hit.payload
     ]
     sources = [
@@ -43,5 +68,5 @@ def chat_hyde(question: str, session_id: str) -> dict:
     return {
         "answer": answer,
         "sources": sources,
-        "hyde_query": hyde_query,  # для отладки — видно что сгенерировала LLM
+        "hyde_query": hyde_query,
     }

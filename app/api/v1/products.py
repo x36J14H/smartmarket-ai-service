@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.db.qdrant import upsert, get_client, search, uuid_to_int64
+from app.services.availability import filter_available_ids
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -36,10 +37,15 @@ class SearchRequest(BaseModel):
 
 
 @router.post("/search")
-def search_products(req: SearchRequest):
-    """Семантический поиск товаров по тексту. Возвращает список UUID товаров."""
+async def search_products(req: SearchRequest):
+    """Семантический поиск товаров по тексту. Возвращает список UUID товаров в наличии."""
     hits = search(req.query, "products", top_k=req.top_k)
-    return {"ids": [p.payload.get("source_id") for p in hits if p.payload]}
+    all_ids = [p.payload.get("source_id") for p in hits if p.payload]
+
+    available = await filter_available_ids(all_ids)
+    filtered_ids = [uid for uid in all_ids if uid in available]
+
+    return {"ids": filtered_ids}
 
 
 @router.delete("/{product_id}")
