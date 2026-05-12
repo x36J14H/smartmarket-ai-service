@@ -55,15 +55,16 @@ async def search_products(req: SearchRequest):
     # LLM отсеивает нерелевантные
     reranked = rerank(req.query, candidates)
 
-    # Обрезаем до нужного количества
-    reranked = reranked[: req.top_k]
-
-    # Фильтруем по наличию через 1С
+    # Фильтруем по наличию через 1С до обрезки до top_k —
+    # чтобы не потерять позиции из-за недоступных товаров в начале списка
     all_ids = [p.payload.get("source_id") for p in reranked if p.payload]
     available = await filter_available_ids(all_ids)
-    filtered_ids = [uid for uid in all_ids if uid in available]
+    filtered = [p for p in reranked if p.payload and p.payload.get("source_id") in available]
 
-    return {"ids": filtered_ids}
+    # Обрезаем до нужного количества уже после фильтра
+    result_ids = [p.payload["source_id"] for p in filtered[: req.top_k]]
+
+    return {"ids": result_ids}
 
 
 @router.delete("/{product_id}")

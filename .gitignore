@@ -29,3 +29,6 @@ ecosystem.config.js
 .idea/
 .vscode/
 .docs/
+
+# Временные файлы
+temp/

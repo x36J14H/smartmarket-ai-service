@@ -116,7 +116,7 @@ def _dispatch(messages: list[dict], temperature: float, max_tokens: int) -> str:
 
 
 def ask(question: str, context_chunks: list[str], history: list[dict] = None) -> str:
-    context = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(context_chunks))
+    context = "\n\n---\n".join(context_chunks)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if history:
         messages.extend(history)
@@ -124,16 +124,112 @@ def ask(question: str, context_chunks: list[str], history: list[dict] = None) ->
     return _dispatch(messages, temperature=0.3, max_tokens=1024)
 
 
-HYDE_PROMPT = """Ты — эксперт интернет-магазина электроники.
-Напиши короткое описание товара или информации, которая идеально отвечала бы на вопрос пользователя.
-Пиши как будто это текст из каталога или FAQ магазина — конкретно, без лишних слов.
-Не отвечай на вопрос напрямую, просто опиши идеальный документ."""
+# ── Переформулирование запроса с учётом истории ───────────────────────────────
+
+# ── Каталог: keyword-детектор ─────────────────────────────────────────────────
+
+# Ключевые слова для детектирования вопросов об ассортименте/категориях
+_CATALOG_KEYWORDS = (
+    "какие товары", "какой товар", "что у вас есть", "что продаёте", "что продаете",
+    "что можно купить", "ассортимент", "категории", "каталог", "какие категории",
+    "какие разделы", "что есть в магазине", "что вы продаёте", "что вы продаете",
+    "какие продукты", "что имеется", "что в наличии есть",
+)
 
 
-def hypothetical_answer(question: str) -> str:
-    """HyDE: генерирует гипотетический документ для улучшения векторного поиска."""
-    messages = [
-        {"role": "system", "content": HYDE_PROMPT},
-        {"role": "user", "content": question},
-    ]
-    return _dispatch(messages, temperature=0.5, max_tokens=256)
+def is_catalog_question(question: str) -> bool:
+    """
+    Быстрая keyword-проверка: спрашивает ли пользователь об ассортименте/категориях.
+    Не использует LLM — работает мгновенно.
+    """
+    q = question.lower()
+    return any(kw in q for kw in _CATALOG_KEYWORDS)
+
+
+# ── Анализ запроса: intent + поисковый запрос (один LLM-вызов) ────────────────
+
+_ANALYZE_PROMPT = """Ты — анализатор запросов для интернет-магазина электроники.
+Тебе дан вопрос пользователя (и возможно история диалога).
+
+Выполни ДВЕ задачи:
+
+1. INTENT — определи категорию вопроса:
+- products — ищет конкретный товар с параметрами (бренд, характеристики, цена, модель)
+- catalog_browse — хочет посмотреть категорию в целом, без конкретных требований
+- info — вопрос о работе магазина (доставка, возврат, гарантия, контакты)
+- multi — смешанный вопрос (и товары, и информация)
+
+Правило: если нет конкретных характеристик (размер, цена, модель, процессор) — это catalog_browse.
+
+2. SEARCH_QUERY — сформулируй оптимальный поисковый запрос для векторной базы:
+- Убери сленг, исправь опечатки, раскрой сокращения
+- Замени местоимения (их, это, они) на конкретные сущности из истории диалога
+- Оставь только ключевые слова для поиска: название, бренд, категория, характеристики
+- Для info-запросов: ключевые слова темы (возврат, доставка, гарантия)
+- Максимум 10 слов
+
+Примеры:
+Вопрос: "пачом планшеты эпл на чипе м4?" → intent: products, search_query: "планшет Apple iPad M4 цена"
+Вопрос: "телек 4к самсунг" → intent: products, search_query: "телевизор Samsung 4K"
+Вопрос: "какие наушники есть?" → intent: catalog_browse, search_query: "наушники"
+Вопрос: "как вернуть товар?" → intent: info, search_query: "возврат товара условия"
+Вопрос: "покажи ноуты" → intent: catalog_browse, search_query: "ноутбук"
+Вопрос: "скок они стоят?" (история: обсуждали AirPods Pro) → intent: products, search_query: "Apple AirPods Pro цена"
+
+Ответь СТРОГО в формате JSON (без markdown-обёртки):
+{"intent": "...", "search_query": "..."}"""
+
+_VALID_INTENTS = {"products", "catalog_browse", "info", "multi"}
+
+
+def analyze_query(question: str, history: list[dict] | None = None) -> dict:
+    """
+    Один LLM-вызов: определяет intent + формирует оптимальный поисковый запрос.
+    Возвращает {"intent": str, "search_query": str}.
+    При ошибке парсинга — fallback на multi + оригинальный вопрос.
+    """
+    messages = [{"role": "system", "content": _ANALYZE_PROMPT}]
+
+    # Добавляем последние 4 сообщения истории для контекста местоимений
+    if history:
+        messages.extend(history[-4:])
+
+    messages.append({"role": "user", "content": question})
+
+    try:
+        raw = _dispatch(messages, temperature=0.0, max_tokens=80)
+
+        # Убираем возможную markdown-обёртку ```json ... ```
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]  # убираем первую строку ```json
+            raw = raw.rsplit("```", 1)[0]  # убираем последний ```
+            raw = raw.strip()
+
+        import json
+        data = json.loads(raw)
+
+        intent = data.get("intent", "multi").strip().lower()
+        search_query = data.get("search_query", "").strip()
+
+        if intent not in _VALID_INTENTS:
+            intent = "multi"
+        if not search_query:
+            search_query = question
+
+        return {"intent": intent, "search_query": search_query}
+
+    except Exception:
+        # Fallback: если JSON не распарсился — используем оригинал
+        return {"intent": "multi", "search_query": question}
+
+
+# Обратная совместимость для тестов
+def classify_intent(question: str) -> str:
+    """Обёртка для обратной совместимости — возвращает только intent."""
+    return analyze_query(question)["intent"]
+
+
+def rewrite_query(question: str, history: list[dict]) -> str:
+    """Обёртка для обратной совместимости — возвращает только search_query."""
+    return analyze_query(question, history)["search_query"]

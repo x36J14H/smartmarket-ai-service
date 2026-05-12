@@ -2,7 +2,6 @@ import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.services.bot import chat
-from app.services.bot_hyde import chat_hyde
 from app.services.history import clear_session
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -17,14 +16,6 @@ class ChatRequest(BaseModel):
 async def chat_endpoint(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
     result = await chat(req.question, session_id)
-    result["session_id"] = session_id
-    return result
-
-
-@router.post("/hyde")
-async def chat_hyde_endpoint(req: ChatRequest):
-    session_id = req.session_id or str(uuid.uuid4())
-    result = await chat_hyde(req.question, session_id)
     result["session_id"] = session_id
     return result
 

@@ -144,6 +144,12 @@ def search_all(query: str, top_k: int = None, score_threshold: float = None) -> 
     threshold = score_threshold if score_threshold is not None else settings.score_threshold
     results = []
     for col in COLLECTIONS:
-        results.extend(search(query, col, top_k=top_k or settings.top_k, score_threshold=threshold))
+        hits = search(query, col, top_k=top_k or settings.top_k, score_threshold=threshold)
+        # Проставляем имя коллекции в payload, чтобы bot.py мог корректно
+        # форматировать чанки (ссылки на товары и разделы сайта)
+        for hit in hits:
+            if hit.payload is not None:
+                hit.payload["collection"] = col
+        results.extend(hits)
     results.sort(key=lambda p: p.score, reverse=True)
     return results[: top_k or settings.top_k]
