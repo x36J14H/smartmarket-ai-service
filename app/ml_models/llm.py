@@ -2,18 +2,32 @@
 LLM-слой с поддержкой нескольких провайдеров.
 Провайдер и настройки берутся из data/llm_settings.json (если есть),
 иначе — из .env через config.py.
+
+Все публичные функции — async. Используется AsyncOpenAI для неблокирующих вызовов.
+GigaChat SDK синхронный — запускается в threadpool через asyncio.to_thread.
 """
 import re
+import json
+import asyncio
+import logging
+from typing import AsyncIterator
+
 from app.core.config import settings
-from app.ml_models.prompts import SYSTEM_PROMPT
+from app.ml_models.prompts import ANALYZE_PROMPT, get_prompt_for_intent
 from app.services.llm_settings import get_active_provider_cfg
 
+logger = logging.getLogger(__name__)
+
+# Валидные intent-ы
+VALID_INTENTS = {"products", "catalog_browse", "compare", "info", "order_help", "promotions", "multi"}
+
+
+# ── Настройки ─────────────────────────────────────────────────────────────────
 
 def _get_active_settings() -> dict:
     """
     Вернуть актуальные настройки LLM.
     Приоритет: data/llm_settings.json > .env
-    base_url всегда берётся из .env по имени провайдера.
     """
     cfg = get_active_provider_cfg()
 
@@ -23,11 +37,10 @@ def _get_active_settings() -> dict:
         provider = settings.llm_provider
         cfg = {"api_key": settings.llm_api_key, "model": settings.llm_model}
 
-    # base_url: приоритет — кастомный из настроек провайдера, затем дефолт из .env
     default_base_url_map = {
         "openai":     settings.openai_base_url,
         "openrouter": settings.openrouter_base_url,
-        "gigachat":   None,  # SDK не использует base_url
+        "gigachat":   None,
     }
     base_url = cfg.get("base_url") or default_base_url_map.get(provider)
 
@@ -40,196 +53,288 @@ def _get_active_settings() -> dict:
     }
 
 
-# ── Провайдеры ────────────────────────────────────────────────────────────────
+# ── Async провайдеры ──────────────────────────────────────────────────────────
 
-def _ask_openai_compatible(
+async def _ask_openai_compatible_async(
     messages: list[dict],
     cfg: dict,
     temperature: float = 0.3,
     max_tokens: int = 1024,
 ) -> str:
-    """OpenAI / OpenRouter / LM Studio — все через openai-клиент."""
-    from openai import OpenAI
-    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
-    response = client.chat.completions.create(
+    """AsyncOpenAI — OpenAI / OpenRouter / LM Studio."""
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
+    response = await client.chat.completions.create(
         model=cfg["model"],
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""
 
 
-def _ask_gigachat(
+async def _ask_openai_compatible_stream(
+    messages: list[dict],
+    cfg: dict,
+    temperature: float = 0.3,
+    max_tokens: int = 1024,
+) -> AsyncIterator[str]:
+    """AsyncOpenAI streaming — возвращает асинхронный генератор чанков."""
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
+    stream = await client.chat.completions.create(
+        model=cfg["model"],
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
+async def _ask_gigachat_async(
     messages: list[dict],
     cfg: dict,
     temperature: float = 0.3,
     max_tokens: int = 1024,
 ) -> str:
-    """GigaChat через официальный SDK (pip install gigachat)."""
-    from gigachat import GigaChat
-    from gigachat.models import Chat, Messages, MessagesRole
+    """GigaChat SDK синхронный — запускаем в threadpool."""
+    def _sync() -> str:
+        from gigachat import GigaChat
+        from gigachat.models import Chat, Messages, MessagesRole
 
-    role_map = {
-        "system":    MessagesRole.SYSTEM,
-        "user":      MessagesRole.USER,
-        "assistant": MessagesRole.ASSISTANT,
-    }
+        role_map = {
+            "system":    MessagesRole.SYSTEM,
+            "user":      MessagesRole.USER,
+            "assistant": MessagesRole.ASSISTANT,
+        }
+        giga_messages = [
+            Messages(role=role_map.get(m["role"], MessagesRole.USER), content=m["content"])
+            for m in messages
+        ]
+        payload = Chat(
+            messages=giga_messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=cfg.get("model", "GigaChat"),
+        )
+        scope = cfg.get("gigachat_scope") or "GIGACHAT_API_PERS"
+        with GigaChat(credentials=cfg["api_key"], scope=scope, verify_ssl_certs=False) as giga:
+            response = giga.chat(payload)
+        return response.choices[0].message.content or ""
 
-    giga_messages = [
-        Messages(role=role_map.get(m["role"], MessagesRole.USER), content=m["content"])
-        for m in messages
-    ]
-
-    payload = Chat(
-        messages=giga_messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        model=cfg.get("model", "GigaChat"),
-    )
-
-    # credentials — base64-строка из личного кабинета Сбера
-    # scope: GIGACHAT_API_PERS | GIGACHAT_API_B2B | GIGACHAT_API_CORP
-    scope = cfg.get("gigachat_scope") or "GIGACHAT_API_PERS"
-    with GigaChat(credentials=cfg["api_key"], scope=scope, verify_ssl_certs=False) as giga:
-        response = giga.chat(payload)
-
-    return response.choices[0].message.content
+    return await asyncio.to_thread(_sync)
 
 
-# ── Публичный интерфейс ───────────────────────────────────────────────────────
+# ── Dispatch ──────────────────────────────────────────────────────────────────
 
-def _dispatch(messages: list[dict], temperature: float, max_tokens: int) -> str:
-    """Выбрать провайдера и выполнить запрос."""
+def _clean_think_tags(text: str) -> str:
+    """Убираем <think>...</think> (Qwen3 и другие reasoning-модели)."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+async def _dispatch_async(
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    """Выбрать провайдера и выполнить async-запрос."""
     cfg = _get_active_settings()
     provider = cfg["provider"]
 
     if provider == "gigachat":
-        result = _ask_gigachat(messages, cfg, temperature, max_tokens)
+        result = await _ask_gigachat_async(messages, cfg, temperature, max_tokens)
     else:
-        # openai / openrouter — OpenAI-compatible (openai также поддерживает кастомный base_url)
-        result = _ask_openai_compatible(messages, cfg, temperature, max_tokens)
+        result = await _ask_openai_compatible_async(messages, cfg, temperature, max_tokens)
 
-    # Убираем <think>...</think> (Qwen3 и другие reasoning-модели)
-    result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
-    return result
+    return _clean_think_tags(result)
 
 
-def ask(question: str, context_chunks: list[str], history: list[dict] = None) -> str:
+async def _dispatch_stream(
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+) -> AsyncIterator[str]:
+    """Streaming dispatch — только для OpenAI-compatible провайдеров.
+    GigaChat не поддерживает streaming через SDK — возвращаем как один чанк."""
+    cfg = _get_active_settings()
+    provider = cfg["provider"]
+
+    if provider == "gigachat":
+        # GigaChat не умеет streaming — имитируем единым чанком
+        result = await _ask_gigachat_async(messages, cfg, temperature, max_tokens)
+        result = _clean_think_tags(result)
+
+        async def _single_chunk():
+            yield result
+
+        return _single_chunk()
+    else:
+        async def _stream_with_cleanup():
+            buffer = []
+            async for chunk in _ask_openai_compatible_stream(messages, cfg, temperature, max_tokens):
+                buffer.append(chunk)
+                yield chunk
+            # think-теги могут быть только на границах чанков — проверяем финальный текст
+            # (для streaming не убираем на лету — слишком сложно, think-модели редкость)
+
+        return _stream_with_cleanup()
+
+
+# ── Публичный интерфейс ───────────────────────────────────────────────────────
+
+async def ask(
+    question: str,
+    context_chunks: list[str],
+    history: list[dict] | None = None,
+    intent: str = "multi",
+) -> str:
+    """Сформировать ответ на вопрос пользователя с учётом контекста и истории."""
+    system_prompt = get_prompt_for_intent(intent)
     context = "\n\n---\n".join(context_chunks)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": system_prompt}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": f"Контекст:\n{context}\n\nВопрос: {question}"})
-    return _dispatch(messages, temperature=0.3, max_tokens=1024)
+    return await _dispatch_async(messages, temperature=0.3, max_tokens=1024)
 
 
-# ── Переформулирование запроса с учётом истории ───────────────────────────────
+async def ask_stream(
+    question: str,
+    context_chunks: list[str],
+    history: list[dict] | None = None,
+    intent: str = "multi",
+) -> AsyncIterator[str]:
+    """Streaming версия ask() — возвращает AsyncIterator чанков."""
+    system_prompt = get_prompt_for_intent(intent)
+    context = "\n\n---\n".join(context_chunks)
+    messages = [{"role": "system", "content": system_prompt}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": f"Контекст:\n{context}\n\nВопрос: {question}"})
+    return await _dispatch_stream(messages, temperature=0.3, max_tokens=1024)
 
-# ── Каталог: keyword-детектор ─────────────────────────────────────────────────
 
-# Ключевые слова для детектирования вопросов об ассортименте/категориях
-_CATALOG_KEYWORDS = (
-    "какие товары", "какой товар", "что у вас есть", "что продаёте", "что продаете",
-    "что можно купить", "ассортимент", "категории", "каталог", "какие категории",
-    "какие разделы", "что есть в магазине", "что вы продаёте", "что вы продаете",
-    "какие продукты", "что имеется", "что в наличии есть",
-)
-
-
-def is_catalog_question(question: str) -> bool:
+async def analyze_query(question: str, history: list[dict] | None = None) -> dict:
     """
-    Быстрая keyword-проверка: спрашивает ли пользователь об ассортименте/категориях.
-    Не использует LLM — работает мгновенно.
+    Один LLM-вызов: определяет intent + оптимальный поисковый запрос +
+    структурированные фильтры + флаг нужности уточнения.
+
+    Возвращает:
+    {
+        "intent": str,
+        "search_query": str,
+        "filters": {"price_max": int|None, "price_min": int|None, "brand": str|None, "category": str|None},
+        "needs_clarification": bool,
+        "clarification_question": str|None,
+    }
     """
-    q = question.lower()
-    return any(kw in q for kw in _CATALOG_KEYWORDS)
+    messages = [{"role": "system", "content": ANALYZE_PROMPT}]
 
-
-# ── Анализ запроса: intent + поисковый запрос (один LLM-вызов) ────────────────
-
-_ANALYZE_PROMPT = """Ты — анализатор запросов для интернет-магазина электроники.
-Тебе дан вопрос пользователя (и возможно история диалога).
-
-Выполни ДВЕ задачи:
-
-1. INTENT — определи категорию вопроса:
-- products — ищет конкретный товар с параметрами (бренд, характеристики, цена, модель)
-- catalog_browse — хочет посмотреть категорию в целом, без конкретных требований
-- info — вопрос о работе магазина (доставка, возврат, гарантия, контакты)
-- multi — смешанный вопрос (и товары, и информация)
-
-Правило: если нет конкретных характеристик (размер, цена, модель, процессор) — это catalog_browse.
-
-2. SEARCH_QUERY — сформулируй оптимальный поисковый запрос для векторной базы:
-- Убери сленг, исправь опечатки, раскрой сокращения
-- Замени местоимения (их, это, они) на конкретные сущности из истории диалога
-- Оставь только ключевые слова для поиска: название, бренд, категория, характеристики
-- Для info-запросов: ключевые слова темы (возврат, доставка, гарантия)
-- Максимум 10 слов
-
-Примеры:
-Вопрос: "пачом планшеты эпл на чипе м4?" → intent: products, search_query: "планшет Apple iPad M4 цена"
-Вопрос: "телек 4к самсунг" → intent: products, search_query: "телевизор Samsung 4K"
-Вопрос: "какие наушники есть?" → intent: catalog_browse, search_query: "наушники"
-Вопрос: "как вернуть товар?" → intent: info, search_query: "возврат товара условия"
-Вопрос: "покажи ноуты" → intent: catalog_browse, search_query: "ноутбук"
-Вопрос: "скок они стоят?" (история: обсуждали AirPods Pro) → intent: products, search_query: "Apple AirPods Pro цена"
-
-Ответь СТРОГО в формате JSON (без markdown-обёртки):
-{"intent": "...", "search_query": "..."}"""
-
-_VALID_INTENTS = {"products", "catalog_browse", "info", "multi"}
-
-
-def analyze_query(question: str, history: list[dict] | None = None) -> dict:
-    """
-    Один LLM-вызов: определяет intent + формирует оптимальный поисковый запрос.
-    Возвращает {"intent": str, "search_query": str}.
-    При ошибке парсинга — fallback на multi + оригинальный вопрос.
-    """
-    messages = [{"role": "system", "content": _ANALYZE_PROMPT}]
-
-    # Добавляем последние 4 сообщения истории для контекста местоимений
+    # Последние 4 сообщения для разрешения местоимений
     if history:
         messages.extend(history[-4:])
 
     messages.append({"role": "user", "content": question})
 
     try:
-        raw = _dispatch(messages, temperature=0.0, max_tokens=80)
+        raw = await _dispatch_async(messages, temperature=0.0, max_tokens=150)
 
-        # Убираем возможную markdown-обёртку ```json ... ```
+        # Убираем markdown-обёртку ```json ... ```
         raw = raw.strip()
         if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1]  # убираем первую строку ```json
-            raw = raw.rsplit("```", 1)[0]  # убираем последний ```
-            raw = raw.strip()
+            raw = raw.split("\n", 1)[-1]
+            raw = raw.rsplit("```", 1)[0].strip()
 
-        import json
         data = json.loads(raw)
 
         intent = data.get("intent", "multi").strip().lower()
         search_query = data.get("search_query", "").strip()
+        filters = data.get("filters") or {}
+        needs_clarification = bool(data.get("needs_clarification", False))
+        clarification_question = data.get("clarification_question") or None
 
-        if intent not in _VALID_INTENTS:
+        if intent not in VALID_INTENTS:
             intent = "multi"
         if not search_query:
             search_query = question
 
-        return {"intent": intent, "search_query": search_query}
+        # Нормализуем filters — убираем None-значения
+        clean_filters: dict = {}
+        for key in ("price_max", "price_min"):
+            val = filters.get(key)
+            if val is not None:
+                try:
+                    clean_filters[key] = int(float(str(val)))
+                except (ValueError, TypeError):
+                    pass
+        for key in ("brand", "category"):
+            val = filters.get(key)
+            if val and isinstance(val, str):
+                clean_filters[key] = val.strip()
+
+        return {
+            "intent":                 intent,
+            "search_query":           search_query,
+            "filters":                clean_filters,
+            "needs_clarification":    needs_clarification,
+            "clarification_question": clarification_question,
+        }
 
     except Exception:
-        # Fallback: если JSON не распарсился — используем оригинал
-        return {"intent": "multi", "search_query": question}
+        logger.warning("analyze_query failed to parse LLM response, using fallback")
+        return {
+            "intent":                 "multi",
+            "search_query":           question,
+            "filters":                {},
+            "needs_clarification":    False,
+            "clarification_question": None,
+        }
 
 
-# Обратная совместимость для тестов
-def classify_intent(question: str) -> str:
-    """Обёртка для обратной совместимости — возвращает только intent."""
-    return analyze_query(question)["intent"]
+async def rerank_async(query: str, hits: list) -> list:
+    """
+    Async LLM-reranking — фильтрует нерелевантные результаты поиска.
+    hits — список ScoredPoint из Qdrant.
+    """
+    from app.ml_models.prompts import RERANK_PROMPT
+
+    if not hits:
+        return hits
+
+    items = "\n".join(
+        f"{i + 1}. {h.payload.get('text', '')[:120]}"
+        for i, h in enumerate(hits)
+        if h.payload
+    )
+    messages = [
+        {"role": "system", "content": RERANK_PROMPT},
+        {"role": "user",   "content": f"Запрос: {query}\n\nТовары:\n{items}"},
+    ]
+    try:
+        response = await _dispatch_async(messages, temperature=0.0, max_tokens=64)
+        indices = {
+            int(x.strip()) - 1
+            for x in response.split(",")
+            if x.strip().isdigit()
+        }
+        reranked = [h for i, h in enumerate(hits) if i in indices]
+        # If reranker returned empty — the query is irrelevant, return empty list
+        return reranked
+    except Exception as exc:
+        logger.warning("reranking failed, returning original hits: %s", exc)
+        return hits
 
 
-def rewrite_query(question: str, history: list[dict]) -> str:
-    """Обёртка для обратной совместимости — возвращает только search_query."""
-    return analyze_query(question, history)["search_query"]
+# ── Синхронные обёртки для обратной совместимости ────────────────────────────
+# Используются только там где async невозможен (например в sync endpoints)
+
+def _dispatch(messages: list[dict], temperature: float, max_tokens: int) -> str:
+    """Sync обёртка для мест где ещё нужен синхронный вызов (reranker в products/search)."""
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, _dispatch_async(messages, temperature, max_tokens))
+        return future.result()

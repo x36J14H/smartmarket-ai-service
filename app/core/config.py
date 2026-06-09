@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     embed_model: str = "intfloat/multilingual-e5-large"
     embed_dim: int = 1024
 
-    # LLM — дефолтный провайдер и ключ (используются если нет data/llm_settings.json)
+    # LLM — дефолтный провайдер (используются если нет data/llm_settings.json)
     llm_provider: str = "openai"
     llm_api_key: str = "sk-..."
     llm_model: str = "gpt-4o-mini"
@@ -22,14 +22,18 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     # GigaChat не нужен — SDK сам знает адрес
 
-    # 1С backend URL (для проверки остатков)
+    # 1С backend
     onec_base_url: str = ""
     onec_user: str = ""
     onec_password: str = ""
+    onec_timeout: float = 5.0  # секунды
 
     # RAG
     top_k: int = 6
     score_threshold: float = 0.1  # для RRF fusion scores (0–1), не cosine
+
+    # Поведение агента
+    min_query_length: int = 3  # минимальная длина запроса для уточнений
 
 
 settings = Settings()

@@ -1,0 +1,4 @@
+# Зависимости для тестов (дополнительно к requirements.txt)
+pytest
+pytest-asyncio
+httpx

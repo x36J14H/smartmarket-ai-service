@@ -28,7 +28,8 @@ ecosystem.config.js
 .kiro/
 .idea/
 .vscode/
-.docs/
+
 
 # Временные файлы
 temp/
+docs/

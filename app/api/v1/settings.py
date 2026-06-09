@@ -25,7 +25,7 @@ DEFAULT_MODELS: dict[str, list[str]] = {
         "openai/gpt-4o-mini", "openai/gpt-4o",
         "anthropic/claude-3.5-sonnet",
         "google/gemini-flash-1.5",
-        "meta-llama/llama-3.1-8b-instruct:free",
+        "deepseek/deepseek-chat",
     ],
 }
 
@@ -288,8 +288,9 @@ def _validate_openai_compatible(provider: str, cfg: dict) -> None:
 
     if provider == "openrouter":
         # OpenRouter отдаёт models.list() без авторизации — проверяем через chat
+        ping_model = cfg.get("selected_model") or "openai/gpt-4o-mini"
         client.chat.completions.create(
-            model="meta-llama/llama-3.1-8b-instruct:free",
+            model=ping_model,
             messages=[{"role": "user", "content": "hi"}],
             max_tokens=1,
         )
